@@ -7,18 +7,14 @@ import socket
 from contextlib import suppress
 from zoneinfo import ZoneInfo
 
-# logger = logging.getLogger(__name__)
-# logger.setLevel(logging.INFO)
-# log_handler = logging.FileHandler('server.log')
-# log_formatter = logging.Formatter('%(filename)s:%(name)s:%(message)s')
-# log_handler.setFormatter(log_formatter)
-# logger.addHandler(log_handler)
+
 
 class Server():
     #Class Constants
     BACKLOG = 10
     DATASIZE = 4096
     ENCODING = 'ISO-8859-1'
+    LOG_FORMAT = '%(filename)s:%(name)s:%(message)s'
     MAX_CLIENTS = 100
     MAX_CLIENTS_REACHED_MSG = (
     "Server has reached the maximum amount of clients."
@@ -31,19 +27,22 @@ class Server():
     
     #Constructor
     def __init__(self, host: str, port: int, 
-                 client_map:dict[socket.socket, str]=None):
+                 client_map:dict[socket.socket, str] | None=None):
         """Constructor for server class"""
         self.host = self.validate_host(host)
         self.port = self.validate_port(port)
         self.addr = (self.host, self.port)
         self.client_map = dict(client_map) if client_map is not None else {}
         self.sock = self.setup_socket()
+        self.logger = self.create_logger()
 
     #Methods
     def accept_connection(self) -> tuple[socket.socket, str, int]:
         """Accept connections, essentially a wrapper for socket.accept()"""
         client, addr = self.sock.accept()
         host, port = addr
+        log_msg = f"{self.time_now()} Accepted: {client}"
+        self.logger.info(log_msg)
         return client, host, port
 
 
@@ -51,7 +50,11 @@ class Server():
         #Lock this section to ensure proper count of clients
         if len(self.client_map) < self.MAX_CLIENTS:
             self.client_map[client] = username
+            log_msg = f"{self.time_now()} Added: {username} {client}"
+            self.logger.info(log_msg)
             return True
+        log_msg = f"{self.time_now()} Not Added: {username} {client}"
+        self.logger.info(log_msg)
         return False
 
 
@@ -59,12 +62,16 @@ class Server():
         """Ask the client to send their desire username for the chat"""
         msg = f"{self.time_now()} Please enter your username:"
         client.sendall(msg.encode(self.ENCODING))
+        log_msg = f"{self.time_now()} Sent: {msg} to {client}"
+        self.logger.info(log_msg)
 
 
     def broadcast_msg(self, msg: str) -> None:
         """Send a broadcast message to all clients in the chatroom"""
         for connection in self.client_map.keys():
             connection.sendall(msg.encode(self.ENCODING))
+            log_msg = f"{self.time_now()} Sent: {msg} to {connection}"
+            self.logger.info(log_msg)
 
 
     def close_all_connections(self) -> None:
@@ -74,6 +81,18 @@ class Server():
         for connection in connections_to_close.keys():
             connection.shutdown(socket.SHUT_RDWR)
             connection.close()
+            log_msg = f"{self.time_now()} Closed: {connection}"
+            self.logger.info(log_msg)
+
+    def create_logger(self) -> logging.Logger:
+        """Creates the logger for the server"""
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+        file_handler = logging.FileHandler('server.log')
+        formatter = logging.Formatter(self.LOG_FORMAT)
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        return logger
 
 
     def disconnect_client(self, client: socket.socket) -> None:
@@ -87,6 +106,8 @@ class Server():
         finally:
             with suppress(OSError):
                 client.close()
+                log_msg = f"{self.time_now()} Closed: {client}"
+                self.logger.info(log_msg)
 
         #Never had the user registered, so nothing to broadcast
         if not username:
@@ -96,6 +117,8 @@ class Server():
         
         for connection in self.client_map.keys():
             connection.sendall(remove_user_msg.encode(self.ENCODING))
+            log_msg = f"{self.time_now()} Sent: {remove_user_msg} to {client}"
+            self.logger.info(log_msg)
 
 
     def is_there_room(self) -> bool:
@@ -107,13 +130,20 @@ class Server():
     def listen_for_connections(self) -> None:
         """Listens for connections, provides msg and log input"""
         ### NEED TO IMPLEMENT LOGGING CAPE ###
-        print(f"{self.time_now()} Listening for connections on {self.addr}")
+        msg = f"{self.time_now()} Listening for connections on {self.addr}"
+        print(msg)
+        self.logger.info(msg)
         self.sock.listen(self.BACKLOG)
 
 
     def max_capacity_notification(self, client: socket.socket) -> None:
         """Let client know the server is maxed out, try again later"""
         client.sendall(self.MAX_CLIENTS_REACHED_MSG.encode(self.ENCODING))
+        log_msg = (
+            f"{self.time_now()} Sent {self.MAX_CLIENTS_REACHED_MSG} to "
+            f"{client}"
+        )
+        self.logger.info(log_msg)
 
 
     def new_user_notification(self, client: socket.socket) -> None:
@@ -123,6 +153,8 @@ class Server():
         for connection in self.client_map.keys():
             if connection is not client:
                 connection.sendall(new_user_msg.encode(self.ENCODING))
+                log_msg = f"{self.time_now()} Sent {new_user_msg} to {connection}"
+                self.logger.info(log_msg)
 
 
     def process_username(self, client: socket.socket) -> str:
@@ -134,7 +166,9 @@ class Server():
             return username[:self.MAX_USERNAME_SIZE]
         elif not username:
             username = f"User_{len(self.client_map)}"
-
+        
+        log_msg = f"{self.time_now()} Recv: {username} from {client}"
+        self.logger.info(log_msg)
         return username
     
 
@@ -142,6 +176,8 @@ class Server():
         """Welcome the new user to the chatroom"""
         msg = f"{self.time_now()} {self.WELCOME_MSG}\nUsername is {username}"
         client.sendall(msg.encode(self.ENCODING))
+        log_msg = f"{self.time_now()} Sent {msg} to {client}"
+        self.logger.info(log_msg)
 
 
     def setup_socket(self) -> socket.socket:
